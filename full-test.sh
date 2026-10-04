@@ -1,22 +1,46 @@
 #!/bin/bash
+# This script can be copied into your base directory for use with
+# automated testing using assignment-autotest.  It automates the
+# steps described in https://github.com/cu-ecen-5013/assignment-autotest/blob/master/README.md#running-tests
+set -e
 
-cd "$(dirname "$0")" || exit 1
+cd `dirname $0`
+test_dir=`pwd`
+echo "starting test with SKIP_BUILD=\"${SKIP_BUILD}\" and DO_VALIDATE=\"${DO_VALIDATE}\""
 
-logfile="full-test-run.log"
-rm -f "$logfile"
+# This part of the script always runs as the current user, even when
+# executed inside a docker container.
+# See the logic in parse_docker_options for implementation
+logfile=test.sh.log
+# See https://stackoverflow.com/a/3403786
+# Place stdout and stderr in a log file
+exec > >(tee -i -a "$logfile") 2> >(tee -i -a "$logfile" >&2)
 
-# Run the original test, displaying output live and saving it.
-bash ./full-test-inner.sh 2>&1 | tee "$logfile" &
-test_pid=$!
+echo "Running test with user $(whoami)"
 
-# Wait until the final runqemu cleanup message appears.
-while ! grep -q 'runqemu - INFO - Host uptime:' "$logfile" 2>/dev/null; do
-    if ! kill -0 "$test_pid" 2>/dev/null; then
-        break
+set +e
+
+# If there's a configuration for the assignment number, use this to look for
+# additional tests
+if [ -f conf/assignment.txt ]; then
+    # This is just one example of how you could find an associated assignment
+    assignment=`cat conf/assignment.txt`
+    if [ -f ./assignment-autotest/test/${assignment}/assignment-test.sh ]; then
+        echo "Executing assignment test script"
+        ./assignment-autotest/test/${assignment}/assignment-test.sh $test_dir
+        rc=$?
+        if [ $rc -eq 0 ]; then
+            echo "Test of assignment ${assignment} complete with success"
+        else
+            echo "Test of assignment ${assignment} failed with rc=${rc}"
+            exit $rc
+        fi
+    else
+        echo "No assignment-test script found for ${assignment}"
+        exit 1
     fi
-    sleep 1
-done
-
-# Wait for the test to finish and propagate its status.
-wait "$test_pid"
-exit $?
+else
+    echo "Missing conf/assignment.txt, no assignment to run"
+    exit 1
+fi
+exit ${unit_test_rc}
